@@ -1,0 +1,79 @@
+StableTrust Integration – Blockers Faced
+
+1. FairyPort WebSocket Disconnects
+
+* FairyPort repeatedly disconnected from BNB Testnet RPC.
+* Error: websocket: close 1013: Connection timeout exceeded.
+* Required relayer restarts and RPC investigation.
+
+2. Relayer Processing Old Transactions
+
+* FairyPort replayed historical deposits from checkpoint storage.
+* Old deposit transactions were repeatedly submitted to Fairyring.
+* Required clearing/recreating relayer checkpoints.
+
+3. "pending action" Errors on Deposit
+
+* EVM contract rejected new deposits with:
+  "execution reverted: pending action"
+* Caused by previous operations not being finalized.
+
+4. Account Creation Callback Failure
+
+* Fairyring account creation succeeded.
+* Callback to EVM failed with:
+  "execution reverted: no pending"
+* Indicated EVM/FairyPort state synchronization issues.
+
+5. Diamond Redeployment & Configuration
+
+* Multiple deployments required.
+* Needed to reconfigure token support, operator settings, contract addresses, and frontend environment variables.
+
+6. SDK / Contract Interface Mismatch
+
+* Several expected read functions were unavailable on the deployed Diamond.
+* Calls such as getConfidentialAccount() and pendingAction() reverted because the selectors were not exposed through the deployed facets.
+
+7. Balance Synchronization Issues
+
+* Shielded balances were not immediately reflected in the UI.
+* Required additional balance polling and synchronization logic.
+
+8. Transfer Settlement Timeout
+
+* Frontend reported:
+  "Timeout waiting for transfer to complete."
+* Transfer requests reached Fairyring but never successfully settled.
+
+9. Fairyring Transfer Proof Verification Failure (Current Blocker)
+
+* Deposits succeed.
+* Account creation succeeds.
+* Shielded balances update correctly.
+* Confidential transfers fail during verification.
+
+Error:
+Transfer proofs verification failed:
+Chain query failed (Transfer proofs):
+Querier contract error: code 1
+
+10. BNB Testnet Environment Parity Issue
+
+* Entire flow works correctly on Anvil:
+
+  * Registration
+  * Deposit
+  * Transfer
+  * Withdrawal
+* Only transfer verification fails on BNB Testnet/Fairyring setup.
+
+Current Status:
+✅ Frontend Complete
+✅ CLI Complete
+✅ Full Flow Working on Anvil
+✅ BNB Testnet Registration Working
+✅ BNB Testnet Deposits Working
+✅ Balance Sync Working
+
+❌ Confidential Transfer Verification Failing on Fairyring (Remaining Blocker)
