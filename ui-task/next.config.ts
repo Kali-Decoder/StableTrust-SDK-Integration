@@ -1,6 +1,7 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  webpack: (config, { isServer }) => {
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  webpack: (config, { isServer }: { isServer: boolean }) => {
     // Force async WebAssembly processing support layers
     config.experiments = {
       ...config.experiments,

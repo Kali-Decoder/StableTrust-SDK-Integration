@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { ConfidentialTransferClient, ERC20_ABI } from "@/config/sdk-proxy";
 import { NETWORKS_CONFIG } from "@/config/bnb";
+import { getFriendlyError } from "@/lib/error-utils";
 
 const gasOverrides = {
   maxFeePerGas: ethers.parseUnits("20", "gwei"),
@@ -39,6 +40,39 @@ export class StableTrustService {
     );
   }
 
+  private sleep(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async waitForSettlement(
+    address: string,
+    action: string,
+    timeoutMs = 90000,
+    intervalMs = 2000
+  ) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        const accountInfo = await this.client.getAccountInfo(address);
+        const pendingAction = Boolean(accountInfo?.pendingAction);
+        const finalized = Boolean(accountInfo?.finalized);
+
+        if (finalized || pendingAction === false) {
+          return accountInfo;
+        }
+      } catch (error) {
+        console.warn(`Unable to poll ${action} settlement:`, error);
+      }
+
+      await this.sleep(intervalMs);
+    }
+
+    throw new Error(
+      `Timeout waiting for ${action} settlement. The relayer may still be processing the transaction.`
+    );
+  }
+
   private async getStoredConfidentialPrivateKey() {
     const address = await this.signer.getAddress();
   
@@ -64,27 +98,39 @@ export class StableTrustService {
   }
 
   async getBalances(address: string, alicePrivateKey?: string) {
-    const provider = this.signer.provider!;
-    const nativeBal = await provider.getBalance(address);
+    try {
+      const provider = this.signer.provider!;
+      const tokenContract = new ethers.Contract(
+        this.currentConfig.tokenAddress,
+        ERC20_ABI,
+        provider
+      );
 
-    const tokenContract = new ethers.Contract(this.currentConfig.tokenAddress, ERC20_ABI, provider);
-    const publicBal = await tokenContract.balanceOf(address);
+      const [nativeBal, tokenDecimals] = await Promise.all([
+        provider.getBalance(address),
+        tokenContract.decimals(),
+      ]);
 
-    let shieldedBalStr = "0.0 (Key Inactive)";
-    if (alicePrivateKey) {
-      try {
-        const confBal = await this.client.getConfidentialBalance(address, alicePrivateKey, this.currentConfig.tokenAddress);
-        shieldedBalStr = ethers.formatUnits(confBal.amount, 18);
-      } catch {
-        shieldedBalStr = "0.0 (Registered)";
+      const publicBal = await tokenContract.balanceOf(address);
+
+      let shieldedBalStr = "0.0 (Key Inactive)";
+      if (alicePrivateKey) {
+        try {
+          const confBal = await this.client.getConfidentialBalance(address, alicePrivateKey, this.currentConfig.tokenAddress);
+          shieldedBalStr = ethers.formatUnits(confBal.amount, tokenDecimals);
+        } catch {
+          shieldedBalStr = "0.0 (Registered)";
+        }
       }
-    }
 
-    return {
-      native: parseFloat(ethers.formatEther(nativeBal)).toFixed(4),
-      publicToken: ethers.formatUnits(publicBal, 18),
-      shielded: shieldedBalStr,
-    };
+      return {
+        native: parseFloat(ethers.formatEther(nativeBal)).toFixed(4),
+        publicToken: ethers.formatUnits(publicBal, tokenDecimals),
+        shielded: shieldedBalStr,
+      };
+    } catch (error) {
+      throw new Error(getFriendlyError(error, "balance refresh").message);
+    }
   }
 
   async registerIdentity() {
@@ -177,77 +223,69 @@ export class StableTrustService {
         "ensureAccount failed:",
         err
       );
-      throw err;
+      throw new Error(getFriendlyError(err, "account registration").message);
     }
   }
 
   // 🛠️ FIX: Ingest standard dynamic amount strings directly from the UI inputs
   async shieldDeposit(amountStr: string) {
-    console.log("=== DEPOSIT START ===");
+    try {
+      console.log("=== DEPOSIT START ===");
 
-    const address = await this.signer.getAddress();
-    console.log("Wallet:", address);
-    console.log("Amount:", amountStr);
-    console.log("Token:", this.currentConfig.tokenAddress);
-    console.log("Diamond:", this.currentConfig.contractAddress);
+      const address = await this.signer.getAddress();
+      console.log("Wallet:", address);
+      console.log("Amount:", amountStr);
+      console.log("Token:", this.currentConfig.tokenAddress);
+      console.log("Diamond:", this.currentConfig.contractAddress);
 
-    const tokenContract = new ethers.Contract(
-      this.currentConfig.tokenAddress,
-      ERC20_ABI,
-      this.signer
-    );
+      const tokenContract = new ethers.Contract(
+        this.currentConfig.tokenAddress,
+        ERC20_ABI,
+        this.signer
+      );
 
-    const depositValue = ethers.parseUnits(amountStr, 18);
+      const depositValue = ethers.parseUnits(amountStr, 18);
 
-    const balance = await tokenContract.balanceOf(address);
-    console.log("Public Balance:", balance.toString());
+      const balance = await tokenContract.balanceOf(address);
+      console.log("Public Balance:", balance.toString());
 
-    const allowance = await tokenContract.allowance(
-      address,
-      this.currentConfig.contractAddress
-    );
-    console.log("Allowance Before:", allowance.toString());
+      const allowance = await tokenContract.allowance(
+        address,
+        this.currentConfig.contractAddress
+      );
+      console.log("Allowance Before:", allowance.toString());
 
-    const approveTx = await tokenContract.approve(
-      this.currentConfig.contractAddress,
-      depositValue,
-      gasOverrides
-    );
+      const approveTx = await tokenContract.approve(
+        this.currentConfig.contractAddress,
+        depositValue,
+        gasOverrides
+      );
 
-    console.log("Approve Tx:", approveTx.hash);
+      console.log("Approve Tx:", approveTx.hash);
 
-    await approveTx.wait();
+      await approveTx.wait();
 
-    console.log("Approve Confirmed");
+      console.log("Approve Confirmed");
 
-    this.nonceManager.reset();
+      this.nonceManager.reset();
 
-    const depositTx =
-      await this.client.confidentialDeposit(
+      const depositTx = await this.client.confidentialDeposit(
         this.nonceManager,
         this.currentConfig.tokenAddress,
         depositValue,
         gasOverrides
       );
 
-    console.log(
-      "Deposit Tx:",
-      depositTx.hash
-    );
+      if (depositTx.wait) {
+        await depositTx.wait();
+      }
 
-    if (depositTx.wait) {
-      await depositTx.wait();
+      await this.waitForSettlement(address, "deposit");
+
+      return depositTx.hash;
+    } catch (error) {
+      throw new Error(getFriendlyError(error, "deposit").message);
     }
-
-    console.log(
-      "Deposit EVM tx confirmed"
-    );
-
-    await new Promise(
-      (resolve) => setTimeout(resolve, 5000)
-    );
-
-    return depositTx.hash;
   }
 
   // 🛠️ FIX: Ingest target dynamic amount strings directly from the UI inputs
@@ -257,8 +295,7 @@ export class StableTrustService {
   ) {
     const address = await this.signer.getAddress();
   
-    const confidentialPrivateKey =
-      await this.getStoredConfidentialPrivateKey();
+    const confidentialPrivateKey = await this.getStoredConfidentialPrivateKey();
   
     if (!confidentialPrivateKey) {
       throw new Error(
@@ -271,52 +308,28 @@ export class StableTrustService {
     console.log("Recipient:", recipientAddress);
     console.log("Amount:", amountStr);
   
-    const balance =
-      await this.client.getConfidentialBalance(
+    try {
+      const balance = await this.client.getConfidentialBalance(
         address,
         confidentialPrivateKey,
         this.currentConfig.tokenAddress
       );
+
+      console.log("LATEST BALANCE BEFORE TRANSFER:", balance);
+
+      const senderInfo = await this.client.getAccountInfo(address);
+      const recipientInfo = await this.client.getAccountInfo(recipientAddress);
+
+      console.log("SENDER INFO:", senderInfo);
+      console.log("RECIPIENT INFO:", recipientInfo);
   
-    console.log(
-      "LATEST BALANCE BEFORE TRANSFER:",
-      balance
-    );
-  
-    const senderInfo =
-      await this.client.getAccountInfo(
-        address
-      );
-  
-    console.log(
-      "SENDER INFO:",
-      senderInfo
-    );
-  
-    const recipientInfo =
-      await this.client.getAccountInfo(
-        recipientAddress
-      );
-  
-    console.log(
-      "RECIPIENT INFO:",
-      recipientInfo
-    );
-  
-    this.nonceManager.reset();
-  
-    const transferValue = ethers.parseUnits(
-      amountStr,
-      18
-    );
-  
-    console.log(
-      "TRANSFER VALUE:",
-      transferValue.toString()
-    );
-  
-    const tx =
-      await this.client.confidentialTransfer(
+      this.nonceManager.reset();
+
+      const transferValue = ethers.parseUnits(amountStr, 18);
+
+      console.log("TRANSFER VALUE:", transferValue.toString());
+
+      const tx = await this.client.confidentialTransfer(
         this.nonceManager,
         recipientAddress,
         this.currentConfig.tokenAddress,
@@ -325,13 +338,14 @@ export class StableTrustService {
           ...gasOverrides,
         }
       );
-  
-    console.log(
-      "Transfer Tx:",
-      tx.hash
-    );
-  
-    return tx.hash;
+
+      await this.waitForSettlement(address, "transfer");
+
+      console.log("Transfer Tx:", tx.hash);
+      return tx.hash;
+    } catch (error) {
+      throw new Error(getFriendlyError(error, "transfer").message);
+    }
   }
  
 
@@ -339,8 +353,7 @@ export class StableTrustService {
   async publicExit(amountStr: string) {
     const address = await this.signer.getAddress();
   
-    const confidentialPrivateKey =
-      await this.getStoredConfidentialPrivateKey();
+    const confidentialPrivateKey = await this.getStoredConfidentialPrivateKey();
   
     if (!confidentialPrivateKey) {
       throw new Error(
@@ -359,35 +372,29 @@ export class StableTrustService {
   
     this.nonceManager.reset();
   
-    const withdrawValue = ethers.parseUnits(
-      amountStr,
-      18
-    );
-  
-    const confidentialBalance =
-      await this.client.getConfidentialBalance(
+    try {
+      const withdrawValue = ethers.parseUnits(amountStr, 18);
+
+      const confidentialBalance = await this.client.getConfidentialBalance(
         address,
         confidentialPrivateKey,
         this.currentConfig.tokenAddress
       );
-  
-    console.log(
-      "Confidential Balance:",
-      confidentialBalance
-    );
-  
-    const tx = await this.client.withdraw(
-      this.nonceManager,
-      this.currentConfig.tokenAddress,
-      withdrawValue,
-      gasOverrides
-    );
-  
-    console.log(
-      "Withdraw Tx:",
-      tx.hash
-    );
-  
-    return tx.hash;
+
+      console.log("Confidential Balance:", confidentialBalance);
+
+      const tx = await this.client.withdraw(
+        this.nonceManager,
+        this.currentConfig.tokenAddress,
+        withdrawValue,
+        gasOverrides
+      );
+
+      await this.waitForSettlement(address, "withdrawal");
+      console.log("Withdraw Tx:", tx.hash);
+      return tx.hash;
+    } catch (error) {
+      throw new Error(getFriendlyError(error, "withdrawal").message);
+    }
   }
 }

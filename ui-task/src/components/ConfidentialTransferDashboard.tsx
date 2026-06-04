@@ -3,7 +3,8 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { Wallet, LogOut, ExternalLink, Loader2, ChevronDown } from "lucide-react";
 import { useConfidentialTransfer } from "@/hooks/useConfidentialTransfer";
-import { connectWallet, switchNetwork } from "@/lib/wallet";
+import { NETWORK_CONFIG } from "@/config/bnb";
+import { getFriendlyError } from "@/lib/error-utils";
 
 type StepKey = "claim" | "init" | "balances" | "deposit" | "transfer" | "withdraw";
 
@@ -28,17 +29,25 @@ export default function ConfidentialTransferDashboard() {
     metrics,
     logs,
     aliceKeys,
-    updateWalletState,
+    status,
+    isConnecting,
+    isDisconnecting,
+    isSwitchingChain,
     syncBalances,
+    requestConnect,
+    requestDisconnect,
+    requestSwitchChain,
     runInitAccount,
     runConfidentialDeposit,
     runConfidentialTransfer,
-    runConfidentialWithdrawal,
-    runDisconnect
+    runConfidentialWithdrawal
   } = useConfidentialTransfer();
 
   const [activeStep, setActiveStep] = useState<StepKey>("claim");
   const [networkOverrideMode, setNetworkOverrideMode] = useState<"anvil" | "testnet">("testnet");
+  const [uiNotice, setUiNotice] = useState<{ tone: "info" | "error" | "success"; title: string; message: string } | null>(null);
+  const isWrongNetwork = wallet.isConnected && wallet.chainId !== null && wallet.chainId !== 97;
+  const isWalletBusy = isConnecting || isDisconnecting || isSwitchingChain;
 
   // Controlled form states
   const [depositAmount, setDepositAmount] = useState<string>("0.2");
@@ -52,42 +61,19 @@ export default function ConfidentialTransferDashboard() {
     return {
       chainId: 97,
       name: networkOverrideMode === "anvil" ? "Local Anvil Node (Spoofed 97)" : "BNB Smart Chain Testnet",
-      tokenSymbol: networkOverrideMode === "anvil" ? "mSTB" : "USDC",
+      tokenSymbol: NETWORK_CONFIG.tokenSymbol,
       gasSymbol: "tBNB",
-      contractAddress: process.env.NEXT_PUBLIC_BNB_STABLETRUST_CONTRACT_ADDRESS,
-      explorerUrl: "https://testnet.bscscan.com"
+      contractAddress: process.env.NEXT_PUBLIC_BNB_STABLETRUST_CONTRACT_ADDRESS || NETWORK_CONFIG.contractAddress,
+      explorerUrl: NETWORK_CONFIG.explorerUrl
     };
   }, [networkOverrideMode]);
 
   const handleManualRefresh = useCallback(async () => {
     if (!wallet.isConnected) return;
-  
-    const freshWallet = await updateWalletState();
-  
-    const storedPk = localStorage.getItem(
-      `st_conf_pk_${freshWallet.address?.toLowerCase()}`
-    );
-  
-    const storedPub = localStorage.getItem(
-      `st_conf_pub_${freshWallet.address?.toLowerCase()}`
-    );
-  
-    const storedKeys =
-      storedPk && storedPub
-        ? {
-            privateKey: storedPk,
-            publicKey: storedPub,
-          }
-        : null;
-  
-    await syncBalances(
-      storedKeys,
-      freshWallet,
-      networkOverrideMode
-    );
+    await syncBalances(aliceKeys, wallet, networkOverrideMode);
   }, [
-    wallet.isConnected,
-    updateWalletState,
+    wallet,
+    aliceKeys,
     syncBalances,
     networkOverrideMode
   ]);
@@ -107,28 +93,63 @@ export default function ConfidentialTransferDashboard() {
   const handleNetworkSelectChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const chosenMode = e.target.value as "anvil" | "testnet";
     setNetworkOverrideMode(chosenMode);
+    setUiNotice({
+      tone: "info",
+      title: "Switching network",
+      message: `Please confirm the network change in your wallet. ${chosenMode === "anvil" ? "Anvil" : "BNB Smart Chain Testnet"} will be used for the next step.`,
+    });
     try {
-      await switchNetwork(97, chosenMode === "anvil" ? "http://127.0.0.1:8545" : "https://data-seed-prebsc-1-s1.binance.org:8545/", chosenMode === "anvil" ? "Local Anvil Node" : "BNB Smart Chain Testnet");
-      setTimeout(async () => {
-        const freshWallet = await updateWalletState();
-        if (freshWallet?.isConnected) {
-          await syncBalances(aliceKeys, freshWallet, chosenMode);
-        }
-      }, 300);
+      if (chosenMode === "testnet" && wallet.isConnected && wallet.chainId !== 97) {
+        await requestSwitchChain();
+      }
+      await syncBalances(aliceKeys, wallet, chosenMode);
     } catch (err) {
-      console.error("Network switch error:", err);
+      const friendly = getFriendlyError(err, "network switch");
+      setUiNotice({
+        tone: "error",
+        title: friendly.title,
+        message: friendly.message,
+      });
     }
   };
 
   const handlePrimaryAction = async () => {
     if (!wallet.isConnected) {
       try {
-        await connectWallet();
-        const freshWallet = await updateWalletState();
+        setUiNotice(null);
+        setUiNotice({
+          tone: "info",
+          title: "Connect wallet",
+          message: "Approve the wallet connection request to continue.",
+        });
+        const freshWallet = await requestConnect();
+        if (!freshWallet) return;
         await syncBalances(aliceKeys, freshWallet, networkOverrideMode);
+        if (freshWallet.chainId && freshWallet.chainId !== 97) {
+          setUiNotice({
+            tone: "error",
+            title: "Wrong network",
+            message: "Switch to BNB Smart Chain Testnet before running the confidential flow.",
+          });
+          return;
+        }
       } catch (err) {
-        console.error("Wallet connection failed:", err);
+        const friendly = getFriendlyError(err, "wallet connection");
+        setUiNotice({
+          tone: "error",
+          title: friendly.title,
+          message: friendly.message,
+        });
       }
+      return;
+    }
+
+    if (wallet.chainId && wallet.chainId !== 97) {
+      setUiNotice({
+        tone: "error",
+        title: "Wrong network",
+        message: "Switch your wallet to BNB Smart Chain Testnet before continuing.",
+      });
       return;
     }
 
@@ -200,7 +221,7 @@ export default function ConfidentialTransferDashboard() {
             <div className="text-[10px] font-bold tracking-[0.2em] text-slate-400 mt-2 uppercase">by Fairblock</div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-4 xl:gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-4 xl:gap-6">
             {/* Wallet Identity Card */}
             <div>
               <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 xl:mb-3">Wallet Identity</div>
@@ -215,6 +236,12 @@ export default function ConfidentialTransferDashboard() {
                       <span>Gas asset:</span>
                       <span className="text-slate-900 font-bold">
                         {wallet.isConnected ? `${metrics.native} ${currentNetwork.gasSymbol}` : "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between mt-2 pt-2 border-t border-slate-100">
+                      <span>Network:</span>
+                      <span className={`font-bold ${wallet.chainId && wallet.chainId !== 97 ? "text-rose-600" : "text-emerald-600"}`}>
+                        {wallet.isConnected ? (wallet.chainId === 97 ? "BNB Testnet" : `Chain ${wallet.chainId ?? "—"}`) : "—"}
                       </span>
                     </div>
                   </div>
@@ -258,8 +285,8 @@ export default function ConfidentialTransferDashboard() {
         </div>
 
         <div className="border-t border-slate-200 xl:border-slate-100 pt-6 mt-6 xl:mt-12">
-          {wallet.isConnected ? (
-            <button onClick={runDisconnect} className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.15em] text-slate-400 hover:text-rose-600 transition-colors border-none bg-none cursor-pointer p-0 font-sans" type="button">
+      {wallet.isConnected ? (
+            <button onClick={requestDisconnect} disabled={isWalletBusy} className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.15em] text-slate-400 hover:text-rose-600 transition-colors border-none bg-none cursor-pointer p-0 font-sans disabled:cursor-not-allowed disabled:opacity-60" type="button">
               <LogOut className="h-4 w-4 text-slate-400" />
               <span>Disconnect Session</span>
             </button>
@@ -275,6 +302,23 @@ export default function ConfidentialTransferDashboard() {
       {/* COLUMN 2: CENTER OPERATIONS FRAMEWORK WORKSPACE */}
       <main className="flex items-center justify-center p-4 sm:p-6 lg:p-12 order-1 xl:order-none">
         <div className="w-full max-w-[620px] bg-white border border-slate-200 shadow-sm p-6 sm:p-8 xl:p-10 rounded">
+
+          {(uiNotice || status.tone !== "idle") && (
+            <div className={`mb-6 rounded border px-4 py-3 text-sm leading-relaxed ${
+              (uiNotice?.tone || status.tone) === "error"
+                ? "border-rose-200 bg-rose-50 text-rose-700"
+                : (uiNotice?.tone || status.tone) === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-blue-200 bg-blue-50 text-blue-700"
+            }`}>
+              <div className="font-semibold">
+                {uiNotice?.title || status.title}
+              </div>
+              <div className="text-xs mt-1 opacity-90">
+                {uiNotice?.message || status.message}
+              </div>
+            </div>
+          )}
 
           {/* Stepper Progress Bar Block Header */}
           <div className="flex items-center gap-2 mb-8">
@@ -298,10 +342,11 @@ export default function ConfidentialTransferDashboard() {
               <div className="pt-4 space-y-4">
                 <button
                   onClick={handlePrimaryAction}
-                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer font-medium shadow-sm transition-colors"
+                  disabled={isWalletBusy}
+                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-300"
                   type="button"
                 >
-                  Claim 0.25 {currentNetwork.tokenSymbol} Tokens
+                  {isWalletBusy ? "Processing Wallet..." : `Claim 0.25 ${currentNetwork.tokenSymbol} Tokens`}
                 </button>
                 <div className="text-center">
                   <button
@@ -328,12 +373,12 @@ export default function ConfidentialTransferDashboard() {
               <div className="pt-4 space-y-4">
                 <button
                   onClick={handlePrimaryAction}
-                  disabled={isProcessing}
-                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center justify-center gap-2 font-medium shadow-sm transition-colors"
+                  disabled={isProcessing || isWalletBusy}
+                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center justify-center gap-2 font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-300"
                   type="button"
                 >
-                  {isProcessing && <Loader2 className="h-4 w-4 animate-spin text-white" />}
-                  <span>{isProcessing ? "Generating Cryptographic Pairs..." : "Initialize Confidential Vault"}</span>
+                  {(isProcessing || isWalletBusy) && <Loader2 className="h-4 w-4 animate-spin text-white" />}
+                  <span>{isProcessing || isWalletBusy ? "Processing Wallet..." : "Initialize Confidential Vault"}</span>
                 </button>
                 <div className="text-center">
                   <button
@@ -360,10 +405,11 @@ export default function ConfidentialTransferDashboard() {
               <div className="pt-4 space-y-4">
                 <button
                   onClick={handlePrimaryAction}
-                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer font-medium shadow-sm transition-colors"
+                  disabled={isWalletBusy}
+                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-300"
                   type="button"
                 >
-                  Refetch Ledger Values
+                  {isWalletBusy ? "Processing Wallet..." : "Refetch Ledger Values"}
                 </button>
                 <div className="text-center">
                   <button
@@ -404,12 +450,12 @@ export default function ConfidentialTransferDashboard() {
               <div className="pt-2">
                 <button
                   onClick={handlePrimaryAction}
-                  disabled={isProcessing || !wallet.isConnected}
-                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center justify-center gap-2 font-medium shadow-sm transition-colors"
+                  disabled={isProcessing || isWalletBusy || !wallet.isConnected || isWrongNetwork}
+                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center justify-center gap-2 font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-300"
                   type="button"
                 >
-                  {isProcessing && <Loader2 className="h-4 w-4 animate-spin text-white" />}
-                  <span>{isProcessing ? "Processing Vault Shielding..." : "Deposit"}</span>
+                  {(isProcessing || isWalletBusy) && <Loader2 className="h-4 w-4 animate-spin text-white" />}
+                  <span>{isProcessing || isWalletBusy ? "Processing Wallet..." : "Deposit"}</span>
                 </button>
               </div>
 
@@ -464,12 +510,12 @@ export default function ConfidentialTransferDashboard() {
               <div className="pt-2">
                 <button
                   onClick={handlePrimaryAction}
-                  disabled={isProcessing || !wallet.isConnected}
+                  disabled={isProcessing || isWalletBusy || !wallet.isConnected || isWrongNetwork}
                   className="w-full py-4 text-sm uppercase tracking-wider rounded border-none cursor-pointer flex items-center justify-center gap-2 font-medium font-sans text-white bg-[#8299E8] hover:bg-[#6C85DB] disabled:bg-slate-200 disabled:text-slate-400 transition-colors shadow-sm"
                   type="button"
                 >
-                  {isProcessing && <Loader2 className="h-4 w-4 animate-spin text-slate-300" />}
-                  <span>{isProcessing ? "Transmitting Privacy Proof..." : "Confidential Transfer"}</span>
+                  {(isProcessing || isWalletBusy) && <Loader2 className="h-4 w-4 animate-spin text-slate-300" />}
+                  <span>{isProcessing || isWalletBusy ? "Processing Wallet..." : "Confidential Transfer"}</span>
                 </button>
               </div>
 
@@ -511,12 +557,12 @@ export default function ConfidentialTransferDashboard() {
               <div className="pt-4 space-y-4">
                 <button
                   onClick={handlePrimaryAction}
-                  disabled={isProcessing || !wallet.isConnected}
-                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center justify-center gap-2 font-medium shadow-sm transition-colors"
+                  disabled={isProcessing || isWalletBusy || !wallet.isConnected || isWrongNetwork}
+                  className="w-full mock-action-btn py-3.5 text-sm uppercase tracking-wider rounded border-none bg-blue-600 hover:bg-blue-700 text-white cursor-pointer flex items-center justify-center gap-2 font-medium shadow-sm transition-colors disabled:cursor-not-allowed disabled:bg-slate-300"
                   type="button"
                 >
-                  {isProcessing && <Loader2 className="h-4 w-4 animate-spin text-white" />}
-                  <span>{isProcessing ? "Processing Exit Egress..." : "Exit Privacy Layer Pool"}</span>
+                  {(isProcessing || isWalletBusy) && <Loader2 className="h-4 w-4 animate-spin text-white" />}
+                  <span>{isProcessing || isWalletBusy ? "Processing Wallet..." : "Exit Privacy Layer Pool"}</span>
                 </button>
                 <div className="text-center">
                   <button
@@ -544,14 +590,14 @@ export default function ConfidentialTransferDashboard() {
               <div className="mock-card-flat px-5 py-4 border border-slate-200 rounded bg-white shadow-sm">
                 <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Public Balance</div>
                 <div className="text-xl xl:text-2xl font-serif text-slate-800 mt-2">
-                  {metrics.publicToken} <span className="text-xs font-sans text-slate-400 font-medium">{networkOverrideMode === "anvil" ? "mSTB" : "USDC"}</span>
+                  {metrics.publicToken} <span className="text-xs font-sans text-slate-400 font-medium">{currentNetwork.tokenSymbol}</span>
                 </div>
               </div>
 
               <div className="mock-card-accent px-5 py-4 border border-blue-100 rounded bg-blue-50/30 shadow-sm">
                 <div className="text-[9px] font-bold uppercase tracking-wider text-blue-600 italic font-serif font-bold">Confidential Balance</div>
                 <div className="text-xl xl:text-2xl font-serif text-slate-800 mt-2">
-                  {metrics.shielded} <span className="text-xs font-sans text-slate-400 font-medium">{networkOverrideMode === "anvil" ? "mSTB" : "USDC"}</span>
+                  {metrics.shielded} <span className="text-xs font-sans text-slate-400 font-medium">{currentNetwork.tokenSymbol}</span>
                 </div>
               </div>
             </div>
@@ -569,7 +615,16 @@ export default function ConfidentialTransferDashboard() {
               ) : (
                 <div className="space-y-2">
                   {logs.map((log) => (
-                    <div key={log.id} className="border-b border-slate-100 pb-1 last:border-none">
+                    <div
+                      key={log.id}
+                      className={`border-b pb-1 last:border-none ${
+                        log.variant === "error"
+                          ? "border-rose-100 text-rose-600"
+                          : log.variant === "success"
+                          ? "border-emerald-100 text-emerald-700"
+                          : "border-slate-100 text-slate-600"
+                      }`}
+                    >
                       <span className="text-slate-400">[{log.time}]</span> {log.text}
                     </div>
                   ))}
