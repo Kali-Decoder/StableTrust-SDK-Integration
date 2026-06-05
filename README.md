@@ -129,5 +129,23 @@ npm run dev
 * **Final Commit Hash:** `d4775eac51f6f8482ff09f7a52451b1b7b8bf228`
 * **Demonstration Video Materials:** [Google Drive Folder Walkthrough](https://drive.google.com/drive/folders/1eKwNV8FnRlGtF8JDX2h7_Go5BvXI5jEO?usp=sharing)
 
+
+
+## Integration & SDK Status Assessment
+
+### 1. End-to-End Functional Status
+- **CLI & Backend Suite:** Fully operational multi-phase pipeline (`examples/bnb-complete-flow.js`) executing sequential account registration, ERC-20 allowances, confidential deposits, private transfers, and zero-knowledge withdrawals directly on the BNB Smart Chain Testnet.
+- **Frontend App Implementation:** Seamless interactive walkthrough dashboard mirroring the complete CLI lifecycle under a non-blocking UI environment.
+- **Reactive Event Management:** Real-time wallet identity updates, account switching captures, dynamic token metadata parsing (`mSTB`), and asset balances normalized up to two decimal points.
+
+### 2. Sandbox Constraints & Known Workarounds
+- **Ephemeral State Polling:** The script and interface rely on the SDK's internal `_waitForGlobalState` tracking loop to safely pace transactions alongside the BNB Testnet relayer processing speed.
+- **Local Key Persistence:** Leverages browser `localStorage` as a performance caching layer (`st_conf_pk_`) keyed to individual wallet addresses. This allows users to switch wallets back and forth seamlessly while prompting fresh cryptographic identity derivations only for new, unregistered keys.
+
+### 3. SDK Change Assessment & Rationale
+- **Target Network Configuration:** Centralized all blockchain fallbacks, contract facet addresses, and mock token routing endpoints directly inside the core SDK constants file to natively support BNB Chain Testnet (Chain ID: 97) parameters.
+- **Asynchronous Execution Pacing:** Forced transaction methods to process using `{ waitForFinalization: false }`. This approach hands off lifecycle block verification loops cleanly to the frontend loading manager, keeping UI interaction responsive.
+- **Address & Chain Swap Reactive Listeners:** Added native account change and network protection layers into the core client hook. This configuration blocks invalid RPC queries on wrong networks, routes native chain switching through Privy, and instantly resets user keys when an alternate wallet is selected in the browser extension.
+
 ```
 
