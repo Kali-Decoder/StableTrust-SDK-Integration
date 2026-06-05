@@ -1,6 +1,5 @@
-Here is the clean, production-ready update for your project `README.md`. It centralizes all configurations around the **BNB Smart Chain Testnet**, integrates the updated scripts, highlights your frontend optimization parameters, and keeps the language looking completely non-AI generated.
 
-```markdown
+
 # StableTrust + Fairyring Sandbox Demo
 
 This repository contains an end-to-end sandbox implementation demonstrating multi-phase confidential transactions running on the **BNB Smart Chain Testnet (Chain ID: 97)**. It uses a split-phase asynchronous commitment lifecycle to hide transaction values and ledger states without modifying base-layer protocol mechanics.
@@ -132,4 +131,3 @@ npm run dev
 
 ```
 
-```
