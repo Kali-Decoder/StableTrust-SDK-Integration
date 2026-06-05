@@ -1,79 +1,146 @@
-StableTrust Integration – Blockers Faced
+# StableTrust Integration – Blockers Faced
 
-1. FairyPort WebSocket Disconnects
+## 1. FairyPort WebSocket Disconnects
 
-* FairyPort repeatedly disconnected from BNB Testnet RPC.
-* Error: websocket: close 1013: Connection timeout exceeded.
-* Required relayer restarts and RPC investigation.
+* FairyPort repeatedly disconnected from the BNB Testnet RPC endpoint.
+* Error observed:
 
-2. Relayer Processing Old Transactions
+  * `websocket: close 1013: Connection timeout exceeded`
+* Required relayer restarts and RPC endpoint investigation.
 
-* FairyPort replayed historical deposits from checkpoint storage.
-* Old deposit transactions were repeatedly submitted to Fairyring.
-* Required clearing/recreating relayer checkpoints.
+## 2. Relayer Processing Historical Transactions
 
-3. "pending action" Errors on Deposit
+* FairyPort replayed previously processed deposits from checkpoint storage.
+* Historical deposit transactions were continuously resubmitted to Fairyring.
+* Required checkpoint cleanup and relayer state reset.
 
-* EVM contract rejected new deposits with:
-  "execution reverted: pending action"
-* Caused by previous operations not being finalized.
+## 3. FairyPort Account Synchronization Issues
 
-4. Account Creation Callback Failure
+* FairyPort account state became out of sync with the deployed contracts.
+* Required manual synchronization using:
 
-* Fairyring account creation succeeded.
+```bash
+fairyport sync 0xdAF0182De86F904918Db8d07c7340A1EfcDF8244 \
+--config /Users/nikku.jr.dev/Downloads/fairblock/fairyport/fairyport.config.yaml
+```
+
+* Syncing was required to recover account state and continue testing.
+
+## 4. Pending Action Lock Errors
+
+* New deposits and operations were rejected with:
+
+  * `execution reverted: pending action`
+* Previous operations had not yet finalized through the relayer.
+* Required waiting for relayer settlement before proceeding.
+
+## 5. Account Creation Callback Failures
+
+* Confidential account creation succeeded on Fairyring.
 * Callback to EVM failed with:
-  "execution reverted: no pending"
-* Indicated EVM/FairyPort state synchronization issues.
 
-5. Diamond Redeployment & Configuration
+  * `execution reverted: no pending`
+* Indicated synchronization issues between FairyPort and EVM state.
 
-* Multiple deployments required.
-* Needed to reconfigure token support, operator settings, contract addresses, and frontend environment variables.
+## 6. Diamond Redeployments & Reconfiguration
 
-6. SDK / Contract Interface Mismatch
+* Multiple EVM contract redeployments were required.
+* Needed to reconfigure:
+
+  * Supported tokens
+  * Operators
+  * Contract addresses
+  * Frontend environment variables
+  * FairyPort configuration
+
+## 7. SDK / Contract Interface Mismatch
 
 * Several expected read functions were unavailable on the deployed Diamond.
-* Calls such as getConfidentialAccount() and pendingAction() reverted because the selectors were not exposed through the deployed facets.
+* Functions such as:
 
-7. Balance Synchronization Issues
+  * `getConfidentialAccount()`
+  * `pendingAction()`
+* Reverted because corresponding selectors were not exposed by deployed facets.
 
-* Shielded balances were not immediately reflected in the UI.
-* Required additional balance polling and synchronization logic.
+## 8. Balance Synchronization Issues
 
-8. Transfer Settlement Timeout
+* Shielded balances were not immediately reflected in the frontend.
+* Required additional polling and synchronization logic.
+* Added manual balance refreshes after relayer settlement.
 
-* Frontend reported:
-  "Timeout waiting for transfer to complete."
-* Transfer requests reached Fairyring but never successfully settled.
+## 9. Transfer Settlement Timeouts
 
-9. Fairyring Transfer Proof Verification Failure (Current Blocker)
+* Frontend frequently reported:
 
+  * `Timeout waiting for transfer to complete`
+* Transfer requests reached Fairyring but did not finalize successfully.
+
+## 10. Fairyring Transfer Proof Verification Failure (Current Blocker)
+
+* Registration succeeds.
 * Deposits succeed.
-* Account creation succeeds.
 * Shielded balances update correctly.
-* Confidential transfers fail during verification.
+* Confidential transfers fail during proof verification.
 
 Error:
+
+```text
 Transfer proofs verification failed:
 Chain query failed (Transfer proofs):
 Querier contract error: code 1
+```
 
-10. BNB Testnet Environment Parity Issue
+This currently blocks confidential transfers on BNB Testnet.
 
-* Entire flow works correctly on Anvil:
+## 11. BNB Testnet Environment Parity Issue
 
-  * Registration
-  * Deposit
-  * Transfer
+* Entire flow works successfully on Anvil:
+
+  * Account Registration
+  * Confidential Deposit
+  * Confidential Transfer
   * Withdrawal
-* Only transfer verification fails on BNB Testnet/Fairyring setup.
 
-Current Status:
+* Only BNB Testnet / Fairyring transfer verification fails.
+
+
+12. Token Decimal Precision Issues
+
+- Confidential deposits, transfers, and withdrawals experienced issues when using token amounts with higher decimal precision.
+- Operations would fail or behave inconsistently when using values with many decimal places.
+- Root cause was related to token decimal handling between the SDK, EVM contracts, and confidential balance calculations.
+- Resolved by restricting test transactions to values with up to two decimal places during testing.
+
+Examples:
+✅ 0.01
+✅ 0.10
+✅ 1.00
+
+Problematic:
+❌ 0.0001
+❌ 0.005123
+❌ Highly precise decimal values
+
+- After standardizing transaction amounts, deposit and withdrawal flows became stable during testing.
+
+---
+
+# Current Status
+
 ✅ Frontend Complete
+
 ✅ CLI Complete
-✅ Full Flow Working on Anvil
-✅ BNB Testnet Registration Working
-✅ BNB Testnet Deposits Working
-✅ Balance Sync Working
+
+✅ Frontend Integration Complete
+
+✅ Account Registration Working
+
+✅ Deposits Working
+
+✅ Shielded Balance Synchronization Working
+
+✅ FairyPort Relayer Operational
+
+✅ Full End-to-End Flow Working on Anvil
 
 ❌ Confidential Transfer Verification Failing on Fairyring (Remaining Blocker)

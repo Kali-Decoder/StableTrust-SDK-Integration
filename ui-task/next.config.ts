@@ -1,31 +1,19 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  webpack: (config, { isServer }: { isServer: boolean }) => {
-    // Force async WebAssembly processing support layers
-    config.experiments = {
-      ...config.experiments,
-      asyncWebAssembly: true,
-      layers: true,
+  transpilePackages: ["@fairblock/stabletrust"],
+  webpack: (config) => {
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+      path: false,
+      url: false,
+      "@farcaster/mini-app-solana": false,
     };
-
-    // Fix the "Can't resolve 'fs'" error block on browser bundles
-    if (!isServer) {
-      config.resolve.fallback = {
-        ...config.resolve.fallback,
-        fs: false,
-        path: false,
-        os: false,
-        crypto: false,
-      };
-    }
-
-    // Silence missing dynamic package logger issues (pino, metamask-sdk)
-    config.ignoreWarnings = [
-      { module: /pino/ },
-      { module: /metamask/ }
-    ];
-
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      "@farcaster/mini-app-solana": false,
+    };
     return config;
   },
 };

@@ -34,7 +34,7 @@ export const STABLETRUST_CONTRACTS_BY_CHAIN_ID = Object.freeze({
   421614: "0xbda65d65A7833D28F9391FF01d0b212B75538Cf2", //Arbitrum
   42431: "0xE559fB936C69c46E216bf61B07C16bF1a6d444aa", //Tempo
   // BNB Smart Chain Testnet
-  97: "0x82CF8d42205f0bdC6A5d3Efcd2b9ca84B3E548AB",
+  97: "0x85a2CB5CEaf5172201344f0AB9c5e45b536d0A40",
   56: "0x0000000000000000000000000000000000000000"
 });
 
@@ -92,8 +92,8 @@ export const STABLETRUST_NETWORKS_BY_CHAIN_ID = Object.freeze({
     chainId: 97,
     rpcUrl: "https://data-seed-prebsc-1-s1.binance.org:8545/",
     explorerUrl: "https://testnet.bscscan.com/tx/",
-    tokenAddress: "0x5E6658ac6cBC9b0109C28BED00bC4Af0F0A3f1CD",
-    contractAddress: STABLETRUST_CONTRACTS_BY_CHAIN_ID[97],
+    tokenAddress: "0xC915876c59f8A902bE7E67cAce5083fb7d790ECe",
+    contractAddress: "0x63bF1207C75060b303f2895574584700d53988ac",
   }),
 });
 

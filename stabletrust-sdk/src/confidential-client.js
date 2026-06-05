@@ -57,9 +57,9 @@ export class ConfidentialTransferClient {
       throw new Error("chainId is required");
     }
     if (!resolvedContractAddress) {
-      const supportedChainIds = [2201, 5042002, 84532, 11155111, 421614, 42431, 56, 97]
-      .map(String)
-      .join(", ");
+      const supportedChainIds = [2201, 5042002, 84532, 11155111, 421614, 42431]
+        .map(String)
+        .join(", ");
       throw new Error(
         `contractAddress is required for chainId ${resolvedChainId}. No default Stabletrust contract is configured for this chain. Supported chainIds: ${supportedChainIds}`,
       );
@@ -82,10 +82,7 @@ export class ConfidentialTransferClient {
     this._keyCache = new Map();
 
     try {
-      this.provider = new ethers.JsonRpcProvider(this.config.rpcUrl, null, {
-        staticNetwork: true,
-        cacheTimeout: -1,
-      });
+      this.provider = new ethers.JsonRpcProvider(this.config.rpcUrl);
       this.contract = new ethers.Contract(
         this.config.contractAddress,
         CONTRACT_ABI,
@@ -175,11 +172,7 @@ export class ConfidentialTransferClient {
    * @returns {Promise<{publicKey: string, privateKey: string}>} The derived keys
    */
   async ensureAccount(wallet, options = {}) {
-    const {
-      waitForFinalization = true,
-      maxAttempts = 225,
-      operatorWallet = null,
-    } = options;
+    const { waitForFinalization = true, maxAttempts = 225 } = options;
 
     try {
       const address = await wallet.getAddress();
@@ -200,19 +193,19 @@ export class ConfidentialTransferClient {
         accountInfo = await this.getAccountInfo(address);
       }
 
-      if (
-        operatorWallet &&
-        this._isAccountPending(accountInfo) &&
-        !this._isAccountReady(accountInfo)
-      ) {
-        await this.finalizeAccountCreation(operatorWallet, address, keys.publicKey);
-        accountInfo = await this.getAccountInfo(address);
-      }
-
       if (waitForFinalization) {
-        accountInfo = await this.waitForAccountFinalization(address, {
-          maxAttempts,
-        });
+        let attempts = 0;
+        while (!accountInfo.finalized && attempts < maxAttempts) {
+          await sleep(400);
+          accountInfo = await this.getAccountInfo(address);
+          attempts++;
+        }
+
+        if (!accountInfo.finalized) {
+          throw new Error(
+            `Account finalization timeout after ${maxAttempts} attempts. The account was created but may not be ready yet.`,
+          );
+        }
       }
 
       return keys;
@@ -222,113 +215,6 @@ export class ConfidentialTransferClient {
       }
       throw new Error(`Failed to ensure account: ${error.message}`);
     }
-  }
-
-  /**
-   * Determine whether an account is ready for confidential operations.
-   * Some deployments may lag on the `finalized` flag, so we also accept a
-   * cleared pending-action bit as the readiness signal.
-   * @private
-   */
-  _isAccountReady(accountInfo) {
-    return Boolean(accountInfo?.finalized || accountInfo?.pendingAction === false);
-  }
-
-  /**
-   * Determine whether an account is still awaiting operator finalization.
-   * @private
-   */
-  _isAccountPending(accountInfo) {
-    return Boolean(accountInfo?.exists && accountInfo?.pendingAction);
-  }
-
-  /**
-   * Finalize a pending confidential account using an operator signer.
-   *
-   * @param {ethers.Wallet|ethers.Signer} operatorWallet - Authorized operator
-   * @param {string} ownerAddress - Account owner address
-   * @param {string} elgamalPublicKeyBase64 - Account public key in base64
-   * @param {Object} [options]
-   * @param {boolean} [options.ok=true] - Finalization result
-   * @param {number} [options.resultCode=0] - Contract result code
-   * @returns {Promise<ethers.ContractTransactionReceipt>}
-   */
-  async finalizeAccountCreation(
-    operatorWallet,
-    ownerAddress,
-    elgamalPublicKeyBase64,
-    options = {},
-  ) {
-    const { ok = true, resultCode = 0 } = options;
-
-    if (!operatorWallet) {
-      throw new Error("operatorWallet is required to finalize account creation");
-    }
-    if (!ownerAddress || !ethers.isAddress(ownerAddress)) {
-      throw new Error(`Invalid owner address: ${ownerAddress}`);
-    }
-
-    const accountInfo = await this.getAccountInfo(ownerAddress);
-    if (!accountInfo.exists) {
-      throw new Error(`Cannot finalize missing account: ${ownerAddress}`);
-    }
-    if (!this._isAccountPending(accountInfo) && this._isAccountReady(accountInfo)) {
-      return null;
-    }
-
-    const elgamalPubkey = Buffer.from(elgamalPublicKeyBase64, "base64");
-    const txId = accountInfo.txId != null ? BigInt(accountInfo.txId.toString()) : 0n;
-    const tx = await this.contract
-      .connect(operatorWallet)
-      .createConfidentialAccountResponse(
-        ownerAddress,
-        txId,
-        ok,
-        resultCode,
-        elgamalPubkey,
-      );
-    const receipt = await tx.wait();
-    if (!receipt || receipt.status === 0) {
-      throw new Error("Account finalization transaction failed");
-    }
-    return receipt;
-  }
-
-  /**
-   * Wait until a confidential account becomes usable.
-   *
-   * This is useful when account creation and downstream setup can overlap, so
-   * the caller can start the wait in parallel with other work instead of
-   * blocking on `ensureAccount()`.
-   *
-   * @param {string} address - Account address to poll
-   * @param {Object} [options]
-   * @param {number} [options.maxAttempts=225] - Maximum polling attempts
-   * @param {number} [options.intervalMs=400] - Delay between attempts
-   * @returns {Promise<Object>} The latest account info
-   */
-  async waitForAccountFinalization(address, options = {}) {
-    const { maxAttempts = 225, intervalMs = 400 } = options;
-
-    if (!address || !ethers.isAddress(address)) {
-      throw new Error(`Invalid address: ${address}`);
-    }
-
-    let accountInfo = await this.getAccountInfo(address);
-    let attempts = 0;
-    while (!this._isAccountReady(accountInfo) && attempts < maxAttempts) {
-      await sleep(intervalMs);
-      accountInfo = await this.getAccountInfo(address);
-      attempts++;
-    }
-
-    if (!this._isAccountReady(accountInfo)) {
-      throw new Error(
-        `Account finalization timeout after ${maxAttempts} attempts. Last known state: exists=${accountInfo?.exists ?? false}, finalized=${accountInfo?.finalized ?? false}, pendingAction=${accountInfo?.pendingAction ?? "unknown"}, txId=${accountInfo?.txId?.toString?.() ?? "unknown"}. The account was created but may not be ready yet.`,
-      );
-    }
-
-    return accountInfo;
   }
 
   /**
@@ -552,7 +438,7 @@ export class ConfidentialTransferClient {
     amount,
     options = {},
   ) {
-    const { waitForFinalization = true, recipientPublicKey = null } = options;
+    const { waitForFinalization = true } = options;
 
     try {
       // Validate inputs
@@ -589,12 +475,9 @@ export class ConfidentialTransferClient {
           `Recipient account does not exist. Address: ${recipientAddress}`,
         );
       }
-      let derivedRecipientPublicKey =
-        recipientPublicKey || recipientAccountInfo.elgamalPubkey;
+      let derivedRecipientPublicKey = recipientAccountInfo.elgamalPubkey;
       if (!derivedRecipientPublicKey) {
-        throw new Error(
-          "Recipient public key is required. Ensure the account is finalized or pass recipientPublicKey in options.",
-        );
+        throw new Error("Recipient public key is required");
       }
       // Convert hex bytes to base64 if needed
       if (
@@ -625,7 +508,7 @@ export class ConfidentialTransferClient {
       const derivedCurrentBalanceCiphertext =
         balanceSummary.available.ciphertext;
       const derivedCurrentBalance = balanceSummary.available.amount;
-
+ 
       if (!derivedCurrentBalanceCiphertext) {
         throw new Error(
           "Current balance ciphertext is required. Did you call getConfidentialBalance()?",
@@ -768,6 +651,7 @@ export class ConfidentialTransferClient {
         derivedKeys.privateKey,
         tokenAddress,
       );
+      console.log(balanceSummary);
 
       if (balanceSummary.available.amount < BigInt(amount)) {
         await this._applyPendingIfNeeded(
@@ -786,7 +670,7 @@ export class ConfidentialTransferClient {
 
       const currentBalanceCiphertext = balanceSummary.available.ciphertext;
       const currentBalance = balanceSummary.available.amount;
-
+      console.log(currentBalance,currentBalanceCiphertext);
       if (!currentBalanceCiphertext) {
         throw new Error(
           "Current balance ciphertext is required. Did you call getConfidentialBalance()?",
