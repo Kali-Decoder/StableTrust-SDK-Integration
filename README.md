@@ -89,7 +89,6 @@ make devnet-up
 ```
 
 
-<<<<<<< HEAD
 2. **Compile and Deploy CosmWasm Structures:**
 Target your local contract build parameters and instantiate them inside the Fairyring context.
 3. **Deploy EVM Settlement Contracts:**
@@ -131,4 +130,6 @@ npm run dev
 * **Final Commit Hash:** `replace_with_your_submitted_commit_hash`
 * **Demonstration Video Materials:** [Google Drive Folder Walkthrough](https://drive.google.com/drive/folders/1eKwNV8FnRlGtF8JDX2h7_Go5BvXI5jEO?usp=sharing)
 
+```
 
+```
