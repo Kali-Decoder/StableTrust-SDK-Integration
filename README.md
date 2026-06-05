@@ -126,7 +126,7 @@ npm run dev
 ## Submission Artifacts
 
 * **Repository Link:** [StableTrust SDK Integration](https://github.com/Kali-Decoder/StableTrust-SDK-Integration.git)
-* **Final Commit Hash:** `d4775eac51f6f8482ff09f7a52451b1b7b8bf228`
+* **Final Commit Hash:** `fedd8090f3bd964667a687c13c836036b16378a8`
 * **Demonstration Video Materials:** [Google Drive Folder Walkthrough](https://drive.google.com/drive/folders/1eKwNV8FnRlGtF8JDX2h7_Go5BvXI5jEO?usp=sharing)
 
 
