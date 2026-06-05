@@ -42,8 +42,8 @@ async function runBnbFlow() {
   console.log(`=== Starting Confidential Flow for ${BNB_CHAIN.network} ===`);
   console.log(`======================================================\n`);
 
-  const senderPrivateKey = process.env.SENDER_PRIVATE_KEY || process.env.BNB_SENDER_PRIVATE_KEY;
-  const recipientPrivateKey = process.env.RECIPIENT_PRIVATE_KEY || process.env.BNB_RECIPIENT_PRIVATE_KEY;
+  const senderPrivateKey = process.env.BNB_SENDER_PRIVATE_KEY;
+  const recipientPrivateKey = process.env.BNB_RECIPIENT_PRIVATE_KEY;
 
   if (!senderPrivateKey || !recipientPrivateKey) {
     throw new Error("Missing SENDER_PRIVATE_KEY or RECIPIENT_PRIVATE_KEY in .env");
