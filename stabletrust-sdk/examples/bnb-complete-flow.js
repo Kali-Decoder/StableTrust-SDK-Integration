@@ -17,9 +17,6 @@ const BNB_CHAIN = {
 
 const actionSummary = [];
 
-// Simple helper to halt execution pacing
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 async function trackPerformance(actionName, action) {
   const start = performance.now();
   const startTimeMs = Date.now();
@@ -65,16 +62,12 @@ async function runBnbFlow() {
 
   // ─── Phase 1: Account Registration ───
   console.log("\n--- Phase 1: Registration ---");
-  console.log("⏱️ Waiting 10 seconds before account registration...");
-  // await delay(10000);
 
   await trackPerformance("ENSURE_SENDER_ACCOUNT", () => client.ensureAccount(sender, { waitForFinalization: true }));
   await trackPerformance("ENSURE_RECIPIENT_ACCOUNT", () => client.ensureAccount(recipient, { waitForFinalization: true }));
 
   // ─── Phase 2: Confidential Deposit ───
   console.log("\n--- Phase 2: Deposit ---");
-  console.log("⏱️ Waiting 10 seconds before initiating deposit flow...");
-  // await delay(10000);
 
   const depositAmount = ethers.parseUnits("0.1", tokenDecimals);
   
@@ -90,8 +83,6 @@ async function runBnbFlow() {
 
   // ─── Phase 3: Confidential Transfer ───
   console.log("\n--- Phase 3: Transfer ---");
-  console.log("⏱️ Waiting 10 seconds before transferring tokens...");
-  // await delay(10000);
 
   const transferAmount = ethers.parseUnits("0.05", tokenDecimals);
   
@@ -103,8 +94,6 @@ async function runBnbFlow() {
 
   // ─── Phase 4: Withdrawal ───
   console.log("\n--- Phase 4: Withdraw ---");
-  console.log("⏱️ Waiting 10 seconds before initiating withdrawal...");
-  // await delay(10000);
 
   const withdrawAmount = ethers.parseUnits("0.05", tokenDecimals);
   
