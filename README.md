@@ -3,6 +3,9 @@
 
 This repository contains an end-to-end sandbox implementation demonstrating multi-phase confidential transactions running on the **BNB Smart Chain Testnet (Chain ID: 97)**. It uses a split-phase asynchronous commitment lifecycle to hide transaction values and ledger states without modifying base-layer protocol mechanics.
 
+<img width="1248" height="875" alt="Screenshot 2026-06-05 at 8 32 42 PM" src="https://github.com/user-attachments/assets/bd1c55c2-a966-4850-9380-05f5609718a0" />
+
+
 ### Core Implementation Components
 - **Fairyring:** Dedicated execution layer for confidential accounting states.
 - **FairyPort:** Bi-directional relayer coordination bridge mapping EVM log states to Fairyring.
