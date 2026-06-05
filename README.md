@@ -210,6 +210,6 @@ Once the development server compiles, open your browser and navigate to **[http:
 ## Submission Artifacts
 
 * **Repository Link:** [StableTrust SDK Integration](https://github.com/Kali-Decoder/StableTrust-SDK-Integration.git)
-* **Final Commit Hash:** `fedd8090f3bd964667a687c13c836036b16378a8`
+* **Final Commit Hash:** `7b557973a8fd8e04bfb8f0a273d98769db5cb67d`
 * **Demonstration Video Materials:** [Google Drive Folder Walkthrough](https://drive.google.com/drive/folders/1eKwNV8FnRlGtF8JDX2h7_Go5BvXI5jEO?usp=sharing)
 
