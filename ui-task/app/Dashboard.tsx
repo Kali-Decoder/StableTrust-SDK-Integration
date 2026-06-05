@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { usePrivy } from "@privy-io/react-auth";
+// 🎯 Added useWallets alongside usePrivy to read active extension arrays directly
+import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { useConfidentialClient } from "./hooks/useConfidentialClient";
 import { AppError, parseError } from "./utils/errorParser";
 import { Toaster, toast } from "sonner";
@@ -13,6 +14,7 @@ import { Wallet, LogOut, Check, ArrowUpRight } from "lucide-react";
 
 export default function Dashboard() {
   const { login, logout, authenticated, user } = usePrivy();
+  const { wallets } = useWallets(); // 🎯 Access active wallet extensions array matrix
   const {
     config,
     ensureAccount,
@@ -27,6 +29,8 @@ export default function Dashboard() {
     error,
     tokenSymbol,
     lastTxHash,
+    isWrongNetwork,  
+    switchNetwork,   
   } = useConfidentialClient();
 
   const [depositAmount, setDepositAmount] = useState("");
@@ -65,7 +69,16 @@ export default function Dashboard() {
     setOnboardingFinished(false);
   };
 
+  // ─── 🎯 FIXED: Reactive Address Mapping Engine ───
   const resolvedAddress = useMemo(() => {
+    // Prioritize the raw selected primary extension array pointer first to beat local cache lags
+    if (wallets && wallets.length > 0) {
+      const activePrimaryWallet = wallets.find((w) => w.meta?.primary) || wallets[0];
+      if (activePrimaryWallet?.address) {
+        return activePrimaryWallet.address;
+      }
+    }
+
     const linkedSmartWalletAddress =
       user?.linkedAccounts?.find(
         (account) => account.type === "smart_wallet" && "address" in account,
@@ -77,7 +90,7 @@ export default function Dashboard() {
       )?.address ?? null;
 
     return user?.wallet?.address ?? linkedSmartWalletAddress ?? linkedWalletAddress;
-  }, [user]);
+  }, [user, wallets]);
 
   // ─── Shortened Address Computation ───
   const shortAddress = useMemo(() => {
@@ -246,9 +259,9 @@ export default function Dashboard() {
               </div>
               <div className="flex flex-col gap-3 p-4 border border-slate-100">
                 <div className="flex items-center gap-2 border-b border-slate-50 pb-2">
-                  <div className="glow-dot" />
+                  <div className={isWrongNetwork ? "bg-red-500 h-2 w-2 rounded-full" : "glow-dot"} />
                   <span className="text-xs font-mono uppercase tracking-wider text-slate-600">
-                    {supportedChains.find((c) => c.id === config.chainId)?.name || "BNB Testnet"}
+                    {isWrongNetwork ? "Unsupported Network" : (supportedChains.find((c) => c.id === config.chainId)?.name || "BNB Testnet")}
                   </span>
                 </div>
               </div>
@@ -258,7 +271,7 @@ export default function Dashboard() {
             <nav className="space-y-2">
               <button
                 onClick={handleFaucetRequest}
-                disabled={faucetLoading}
+                disabled={faucetLoading || isWrongNetwork}
                 className="w-full text-left p-3 text-sm font-medium hover:bg-slate-50 border-l-2 border-transparent hover:border-[#1E4FD6] transition-all flex items-center justify-between group"
               >
                 <span>Request Faucet</span>
@@ -304,7 +317,25 @@ export default function Dashboard() {
               </div>
             )}
 
-            {!onboardingFinished ? (
+            {isWrongNetwork ? (
+              <div className="card text-center py-16 bg-white border border-red-200 space-y-6 shadow-sm">
+                <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mx-auto text-red-500 font-bold text-xl">
+                  ⚠️
+                </div>
+                <div className="space-y-2 max-w-sm mx-auto">
+                  <h2 className="text-2xl font-serif text-[#0F172A]">Wrong Network Detected</h2>
+                  <p className="text-sm text-slate-500">
+                    This sandbox runs exclusively on the <strong>BNB Smart Chain Testnet (Chain ID: 97)</strong>.
+                  </p>
+                </div>
+                <button
+                  onClick={switchNetwork}
+                  className="btn-primary bg-red-600 hover:bg-red-700 border-none py-3 px-8 text-white tracking-wider font-semibold uppercase text-xs"
+                >
+                  Switch to BNB Testnet
+                </button>
+              </div>
+            ) : !onboardingFinished ? (
               <Onboarding
                 onComplete={completeOnboarding}
                 config={config}
@@ -474,14 +505,12 @@ export default function Dashboard() {
               <div className="p-6 border border-slate-100 bg-slate-50/50 space-y-1 shadow-sm">
                 <h3 className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">Public Balance</h3>
                 <div className="text-2xl font-serif text-[#0F172A]">
-                  {/* Fixed decimal normalization to match custom scale */}
                   {Number.parseFloat(balances.public || "0").toFixed(2)} <span className="text-xs font-sans text-slate-400">{tokenSymbol}</span>
                 </div>
               </div>
               <div className="p-6 border border-[#1E4FD6]/20 bg-[#1E4FD6]/5 space-y-1 shadow-sm">
                 <h3 className="text-[10px] text-[#1E4FD6] uppercase tracking-widest font-bold italic">Confidential Balance</h3>
                 <div className="text-2xl font-serif text-[#0F172A]">
-                  {/* Fixed decimal normalization to match custom scale */}
                   {Number.parseFloat(balances.confidential || "0").toFixed(2)} <span className="text-xs font-sans text-slate-400">{tokenSymbol}</span>
                 </div>
               </div>
@@ -492,7 +521,7 @@ export default function Dashboard() {
                 fetchBalances();
               }}
               className="w-full py-3 text-[10px] uppercase tracking-widest font-bold border border-slate-200 hover:bg-slate-50 transition-colors"
-              disabled={loading}
+              disabled={loading || isWrongNetwork}
             >
               Refresh Assets
             </button>

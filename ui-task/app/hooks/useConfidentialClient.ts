@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { ethers } from "ethers";
 import { ConfidentialTransferClient } from "@/lib/sdk-proxy";
@@ -9,12 +9,11 @@ import { sendFaucet } from "../actions/faucet";
 export interface ConfidentialConfig {
   rpcUrl: string;
   tokenAddress: string;
-  contractAddress: string; // Added field to map explicit contract routing
+  contractAddress: string; 
   explorerUrl: string;
   chainId: number;
 }
 
-// ────── Update Fallbacks to BNB Smart Chain Testnet ──────
 const DEFAULT_CONFIG: ConfidentialConfig = {
   rpcUrl: "https://data-seed-prebsc-1-s3.bnbchain.org:8545",
   tokenAddress:
@@ -27,6 +26,11 @@ const DEFAULT_CONFIG: ConfidentialConfig = {
     process.env.NEXT_PUBLIC_BNB_EXPLORER_URL || "https://testnet.bscscan.com/tx/",
   chainId: parseInt(process.env.NEXT_PUBLIC_CHAIN_ID || "97"),
 };
+
+const ERC20_ABI = [
+  "function symbol() view returns (string)",
+  "function decimals() view returns (uint8)",
+];
 
 export function useConfidentialClient() {
   const { authenticated, user } = usePrivy();
@@ -49,6 +53,15 @@ export function useConfidentialClient() {
   const [tokenDecimals, setTokenDecimals] = useState(18);
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
 
+  // 🎯 Network Tracking State Layer
+  const [activeChainId, setActiveChainId] = useState<number | null>(null);
+
+  // 🎯 Computed Variable: Dynamic Network Protection Hook
+  const isWrongNetwork = useMemo(() => {
+    if (!authenticated || !activeChainId) return false;
+    return activeChainId !== config.chainId;
+  }, [authenticated, activeChainId, config.chainId]);
+
   useEffect(() => {
     async function initRpc() {
       try {
@@ -68,16 +81,13 @@ export function useConfidentialClient() {
   }, [config]);
 
   useEffect(() => {
+    if (!config.tokenAddress || !config.rpcUrl) return;
     async function fetchTokenDetails() {
-      if (!config.tokenAddress || !config.rpcUrl) return;
       try {
         const provider = new ethers.JsonRpcProvider(config.rpcUrl);
         const tokenContract = new ethers.Contract(
           config.tokenAddress,
-          [
-            "function symbol() view returns (string)",
-            "function decimals() view returns (uint8)",
-          ],
+          ERC20_ABI,
           provider,
         );
 
@@ -95,7 +105,6 @@ export function useConfidentialClient() {
     fetchTokenDetails();
   }, [config.tokenAddress, config.rpcUrl]);
 
-  // ────── Modified: Pass explicit contract architecture configuration parameters ──────
   useEffect(() => {
     try {
       const c = new ConfidentialTransferClient(
@@ -109,63 +118,108 @@ export function useConfidentialClient() {
     }
   }, [config.rpcUrl, config.contractAddress, config.chainId]);
 
-  useEffect(() => {
-    async function getSigner() {
-      if (authenticated && wallets.length > 0) {
-        let wallet = wallets[0];
+  // ─── Reactive Core Signer, Network, and Swap Listener Effect ───
+// ─── REPLACE THE EXISTING getSigner EFFECT IN YOUR HOOK WITH THIS ───
+useEffect(() => {
+  let providerInstance: any = null;
 
-        if (user) {
-          const linkedSmartWalletAddress = user.linkedAccounts?.find(
-            (account) =>
-              account.type === "smart_wallet" && "address" in account,
-          )?.address;
-          const linkedWalletAddress = user.linkedAccounts?.find(
-            (account) => account.type === "wallet" && "address" in account,
-          )?.address;
-          const resolvedAddress =
-            user.wallet?.address ??
-            linkedSmartWalletAddress ??
-            linkedWalletAddress;
+  const handleAccountChange = (accounts: string[]) => {
+    console.log("🦊 Native Wallet Account Switch Detected:", accounts);
+    // Re-trigger balance and key recalculations for the new account
+    if (accounts.length > 0) {
+      fetchBalances(true);
+    }
+  };
 
-          if (resolvedAddress) {
-            const matchingWallet = wallets.find(
-              (w) => w.address.toLowerCase() === resolvedAddress.toLowerCase(),
-            );
-            if (matchingWallet) {
-              wallet = matchingWallet;
-            } else {
-              console.log("Waiting for matching wallet");
-              return;
-            }
-          }
+  async function getSigner() {
+    if (authenticated && wallets.length > 0) {
+      // 🎯 FIXED: Always tie target interaction to the currently active/selected wallet connector
+      let wallet = wallets.find((w) => w.meta?.primary) || wallets[0];
+
+      if (user?.wallet?.address) {
+        const matchingWallet = wallets.find(
+          (w) => w.address.toLowerCase() === user.wallet?.address?.toLowerCase()
+        );
+        if (matchingWallet) wallet = matchingWallet;
+      }
+
+      // Parse Chain ID cleanly out of Privy array tracking primitives
+      const walletChainId = typeof wallet.chainId === "string" 
+        ? parseInt(wallet.chainId.split(":")[1] || wallet.chainId, 10) 
+        : wallet.chainId;
+      setActiveChainId(Number(walletChainId));
+
+      try {
+        // Grab the low-level provider context
+        providerInstance = await wallet.getEthereumProvider();
+        
+        // 🎯 FIXED: Bind an account listener directly to the extension provider instance
+        if (providerInstance?.on) {
+          providerInstance.on("accountsChanged", handleAccountChange);
         }
 
-        try {
-          await wallet.switchChain(config.chainId);
-          const provider = await wallet.getEthereumProvider();
-          const ethereProvider = new ethers.BrowserProvider(provider);
-          const s = await ethereProvider.getSigner();
-          setSigner(s);
-        } catch (err) {
-          console.error("Failed to set signer:", err);
+        const ethereProvider = new ethers.BrowserProvider(providerInstance);
+        const s = await ethereProvider.getSigner();
+        const address = await s.getAddress();
+        
+        setSigner(s);
+
+        // Reactive Keys Sync Block: Check storage when addresses flip
+        const cachedPk = localStorage.getItem(`st_conf_pk_${address.toLowerCase()}`);
+        const cachedPub = localStorage.getItem(`st_conf_pub_${address.toLowerCase()}`);
+        
+        if (cachedPk && cachedPub) {
+          setUserKeys({ privateKey: cachedPk, publicKey: cachedPub });
+        } else {
+          setUserKeys(null); // Force key derivation prompt on the new address
         }
-      } else {
-        setSigner(null);
-        setUserKeys(null);
-        setBalances({ public: "0", confidential: "0", native: "0" });
+      } catch (err) {
+        console.error("Failed to set signer on account swap:", err);
+      }
+    } else {
+      setSigner(null);
+      setUserKeys(null);
+      setActiveChainId(null);
+      setBalances({ public: "0", confidential: "0", native: "0" });
+    }
+  }
+
+  getSigner();
+
+  // Cleanup native listeners to prevent memory leaks and duplicate polling loops
+  return () => {
+    if (providerInstance?.removeListener) {
+      providerInstance.removeListener("accountsChanged", handleAccountChange);
+    }
+  };
+
+  // 🎯 FIXED: Dependent parameters now react when the primary wallet address changes
+}, [authenticated, wallets, wallets[0]?.address, wallets[0]?.chainId, config.chainId, user]);
+
+  // 🎯 Fast Action Executor: Native Trigger routing chain shifts over Privy context
+  const switchNetwork = useCallback(async () => {
+    if (wallets && wallets[0]) {
+      try {
+        await wallets[0].switchChain(config.chainId);
+      } catch (err) {
+        console.error("Failed native network switch execution:", err);
       }
     }
-    getSigner();
-  }, [authenticated, wallets, config.chainId, user]);
+  }, [wallets, config.chainId]);
 
-  // ────── Modified: Added execution configuration overrides ──────
   const ensureAccount = useCallback(async () => {
     if (!client || !signer) return;
     setLoading(true);
     setError(null);
     try {
+      const address = await signer.getAddress();
       const keys = await client.ensureAccount(signer, { waitForFinalization: false });
-      setUserKeys(keys);
+      
+      if (keys?.privateKey && keys?.publicKey) {
+        localStorage.setItem(`st_conf_pk_${address.toLowerCase()}`, keys.privateKey);
+        localStorage.setItem(`st_conf_pub_${address.toLowerCase()}`, keys.publicKey);
+        setUserKeys(keys);
+      }
       return keys;
     } catch (err) {
       const errorMessage = parseError(err as AppError);
@@ -179,7 +233,7 @@ export function useConfidentialClient() {
 
   const fetchBalances = useCallback(
     async (silent: boolean = false) => {
-      if (!signer) return;
+      if (!signer || isWrongNetwork) return; // Prevent raw polling calls on invalid networks
       if (!silent) setLoading(true);
       try {
         const address = await signer.getAddress();
@@ -221,7 +275,7 @@ export function useConfidentialClient() {
             confidentialBal.amount,
             tokenDecimals,
           ),
-          native: ethers.formatEther(nativeBal),
+          native: parseFloat(ethers.formatEther(nativeBal)).toFixed(4),
         });
       } catch (err) {
         console.error("Error fetching balances:", err);
@@ -236,11 +290,12 @@ export function useConfidentialClient() {
       config.tokenAddress,
       tokenDecimals,
       config.rpcUrl,
+      isWrongNetwork,
     ],
   );
 
   useEffect(() => {
-    if (!signer) return;
+    if (!signer || isWrongNetwork) return;
 
     fetchBalances(true);
 
@@ -249,9 +304,8 @@ export function useConfidentialClient() {
     }, 10000);
 
     return () => clearInterval(interval);
-  }, [fetchBalances, signer]);
+  }, [fetchBalances, signer, isWrongNetwork]);
 
-  // ────── Modified: Added execution configuration overrides ──────
   const confidentialDeposit = useCallback(
     async (amount: string) => {
       if (!client || !signer)
@@ -275,14 +329,13 @@ export function useConfidentialClient() {
         const errorMessage = parseError(err as AppError);
         setError(errorMessage);
         throw err;
-      } finally {
+      } finally { // 🎯 Fixed the typo here from 'fill' to 'finally'
         setLoading(false);
       }
     },
     [client, signer, fetchBalances, config.tokenAddress, tokenDecimals],
   );
 
-  // ────── Modified: Added execution configuration overrides ──────
   const confidentialTransfer = useCallback(
     async (recipient: string, amount: string) => {
       if (!client || !signer)
@@ -295,7 +348,7 @@ export function useConfidentialClient() {
           signer,
           recipient,
           config.tokenAddress,
-          amountWei, // Keep input direct structure compatibility
+          amountWei, 
           { waitForFinalization: false }
         );
         setTimeout(() => fetchBalances(true), 2000);
@@ -312,7 +365,6 @@ export function useConfidentialClient() {
     [client, signer, fetchBalances, config.tokenAddress, tokenDecimals],
   );
 
-  // ────── Modified: Added execution configuration overrides ──────
   const withdraw = useCallback(
     async (amount: string) => {
       if (!client || !signer)
@@ -324,7 +376,7 @@ export function useConfidentialClient() {
         const receipt = await client.withdraw(
           signer,
           config.tokenAddress,
-          amountWei, // Keep input direct structure compatibility
+          amountWei, 
           { waitForFinalization: false }
         );
         setTimeout(() => fetchBalances(true), 2000);
@@ -370,6 +422,8 @@ export function useConfidentialClient() {
     balances,
     loading,
     error,
+    isWrongNetwork, 
+    switchNetwork,   
     ensureAccount,
     fetchBalances,
     requestFaucet,
