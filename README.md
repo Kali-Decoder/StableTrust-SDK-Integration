@@ -66,13 +66,8 @@ From a clean start:
 - Fund the deployment wallet before deploying contracts.
 - The demo token is a mock ERC-20, so only BNB is needed for gas.
 
-## Limitations
-- The stack is still a local/dev integration, not production-ready.
-- Several steps require manual config sync.
-- Relayer startup and settlement are not fully automated.
-- Crypto and relayer errors can be hard to diagnose.
 
 ## Submission
-- Repository link: replace with your GitHub URL
+- Repository link: [Repo link](https://github.com/Kali-Decoder/StableTrust-SDK-Integration.git)
 - Final commit hash: replace with the commit you submit
 - Demo video: add a link here if required
